@@ -4,6 +4,18 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>EBI — Espaço Bíblico Infantil · Sistema de Pedidos</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json"/>
+<meta name="theme-color" content="#0d1b2a"/>
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png"/>
+<link rel="apple-touch-icon" href="icon-192.png"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="EBI Pedidos"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+
 <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -36,6 +48,15 @@ header{background:rgba(13,27,42,.85);backdrop-filter:blur(16px);border-bottom:1p
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .logo-title{font-family:'Fredoka One',cursive;font-size:20px;background:linear-gradient(90deg,var(--pink),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .logo-sub{font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+
+/* INSTALL PWA BUTTON */
+#installPwaBtn{display:none;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:none;
+  cursor:pointer;font-weight:800;font-size:12.5px;font-family:'Nunito',sans-serif;
+  background:linear-gradient(135deg,var(--green),#048a69);color:#fff;
+  box-shadow:0 4px 18px rgba(6,214,160,.35);white-space:nowrap;transition:all .2s;flex-shrink:0}
+#installPwaBtn:hover{opacity:.9;transform:translateY(-1px)}
+#installPwaBtn.show{display:inline-flex}
+@media (max-width:640px){#installPwaBtn span.long{display:none}}
 
 /* NAV */
 nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
@@ -122,7 +143,8 @@ tr:hover td{background:rgba(255,255,255,.03)}
   z-index:500;display:flex;align-items:center;justify-content:center;padding:16px}
 .modal-box{background:linear-gradient(135deg,#1a2a3e,#0d1b2a);border:1px solid var(--border);
   border-radius:20px;padding:32px;width:100%;max-width:440px;text-align:center;
-  box-shadow:0 30px 80px rgba(0,0,0,.6);animation:popIn .25s ease}
+  box-shadow:0 30px 80px rgba(0,0,0,.6);animation:popIn .25s ease;
+  max-height:88vh;overflow-y:auto;overscroll-behavior:contain}
 @keyframes popIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}
 .modal-icon{font-size:52px;margin-bottom:12px}
 .modal-title{font-family:'Fredoka One',cursive;font-size:22px;margin-bottom:8px}
@@ -275,6 +297,7 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
         <div class="logo-sub">Espaço Bíblico Infantil</div>
       </div>
     </div>
+    <button id="installPwaBtn" onclick="installPwaApp()">📲 <span class="long">Instalar App</span></button>
     <nav>
       <!-- Aba "Produtos" REMOVIDA — agora temos 5 abas (índices 0..4) -->
       <button class="tab-btn active" onclick="showTab(0)">🛒 Pedidos</button>
@@ -957,7 +980,7 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
 <!-- FIREBASE -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, updateDoc, getDocs }
+import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, updateDoc, getDocs, getDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -1093,9 +1116,21 @@ function showToast(msg, color='linear-gradient(135deg,var(--pink),var(--violet))
 }
 
 // ── FIREBASE INIT ──────────────────────────────────
+// Usa um documento de controle (_meta/<colName>) para saber se o seed inicial
+// já foi feito. Antes, a checagem era "a coleção está vazia?" — isso fazia os
+// dados voltarem sempre que o usuário apagava TODOS os registros de uma
+// coleção, pois na próxima vez que a página carregava ela via a coleção
+// vazia e recriava tudo de novo. Agora o seed roda no máximo uma vez para
+// sempre, então apagar um item não faz ele "voltar" ao atualizar a página.
 async function seedIfEmpty(colName, data) {
+  const metaRef = doc(db, '_meta', colName);
+  const metaSnap = await getDoc(metaRef);
+  if (metaSnap.exists()) return; // já foi semeado alguma vez — nunca mais recriar
   const snap = await getDocs(collection(db, colName));
-  if (snap.empty) for (const item of data) { const id=item.id||genId(); await setDoc(doc(db,colName,id),{...item,id}); }
+  if (snap.empty) {
+    for (const item of data) { const id=item.id||genId(); await setDoc(doc(db,colName,id),{...item,id}); }
+  }
+  await setDoc(metaRef, {seededAt: new Date().toISOString()});
 }
 
 async function initFirebase() {
@@ -2500,6 +2535,90 @@ window.importBackup = async function(input) {
     importBtn.textContent = '📤 Importar Backup';
   }
 };
+
+// ── TRAVA DE SCROLL DO FUNDO QUANDO UM MODAL ESTÁ ABERTO ──
+// Sem isso, a roda do mouse rolava a página por trás do modal em vez do
+// próprio modal. Observa todos os .modal-ov e trava o scroll do <body>
+// enquanto qualquer um deles estiver visível (não tem a classe "hidden").
+(function(){
+  function syncBodyScrollLock() {
+    const anyOpen = Array.from(document.querySelectorAll('.modal-ov'))
+      .some(m => !m.classList.contains('hidden'));
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.modal-ov').forEach(modal=>{
+      new MutationObserver(syncBodyScrollLock).observe(modal, {attributes:true, attributeFilter:['class']});
+    });
+    syncBodyScrollLock();
+  });
+  if (document.readyState !== 'loading') {
+    document.querySelectorAll('.modal-ov').forEach(modal=>{
+      new MutationObserver(syncBodyScrollLock).observe(modal, {attributes:true, attributeFilter:['class']});
+    });
+    syncBodyScrollLock();
+  }
+})();
+
+// ── PWA: INSTALAÇÃO DO APP ─────────────────────────
+let deferredInstallPrompt = null;
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true; // iOS
+}
+
+function isIos() {
+  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+}
+
+function showInstallBtn() {
+  if (isStandalone()) return; // já instalado, nunca mostra
+  $('installPwaBtn').classList.add('show');
+}
+function hideInstallBtn() {
+  $('installPwaBtn').classList.remove('show');
+}
+
+// Chrome/Android/Desktop: o navegador dispara este evento quando o app é instalável
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  showInstallBtn();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  hideInstallBtn();
+  showToast('✅ App instalado com sucesso!','linear-gradient(135deg,var(--green),#048a69)');
+});
+
+window.installPwaApp = async function() {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    const { outcome } = await deferredInstallPrompt.userChoice;
+    if (outcome === 'accepted') hideInstallBtn();
+    deferredInstallPrompt = null;
+    return;
+  }
+  if (isIos()) {
+    alert('Para instalar o app no iPhone/iPad:\n\n1. Toque no ícone de Compartilhar (□↑) na barra do Safari\n2. Escolha "Adicionar à Tela de Início"\n3. Toque em "Adicionar"');
+    return;
+  }
+  alert('Para instalar, abra o menu do navegador (⋮ ou ...) e escolha "Instalar aplicativo" ou "Adicionar à tela inicial".');
+};
+
+// iOS não dispara beforeinstallprompt — mostra o botão manualmente se ainda não instalado
+if (isIos() && !isStandalone()) {
+  document.addEventListener('DOMContentLoaded', showInstallBtn);
+}
+
+// Registra o Service Worker (necessário para o app ser instalável e funcionar offline)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(err => console.error('SW registration failed:', err));
+  });
+}
 
 // ── BOOTSTRAP ──────────────────────────────────────
 initFirebase().then(()=>{
