@@ -1537,8 +1537,15 @@ window.addDistItem = async function() {
   showToast('Item adicionado!');
 };
 
-window.openEditDist = function(fbId) {
-  const item = distItems.find(d=>d._fbId===fbId);
+window.openEditDist = async function(fbId) {
+  // Busca o dado direto do Firestore (não da memória local da aba) para
+  // evitar editar em cima de um valor desatualizado se outra aba/dispositivo
+  // salvou algo enquanto esta aba estava aberta.
+  let item = distItems.find(d=>d._fbId===fbId);
+  try {
+    const freshSnap = await getDoc(doc(db,'distribuidora',fbId));
+    if (freshSnap.exists()) item = {...freshSnap.data(), _fbId: fbId};
+  } catch(e) { /* se falhar, segue com o que já tinha em memória */ }
   if(!item) return;
   $('editDistFbId').value = fbId;
   $('editDistCodigo').value = item.codigo || '';
@@ -1547,6 +1554,11 @@ window.openEditDist = function(fbId) {
   $('editDistEstoque').value = item.estoqueInicial || 0;
   $('editDistEntrada').value = item.entrada || 0;
   $('editDistValor').value = item.valorUnit || 0;
+  // Baseline usado no momento de salvar para detectar se alguém mudou o
+  // registro entre a abertura do modal e o clique em "Salvar".
+  $('editDistModal').dataset.baseline = JSON.stringify({
+    estoqueInicial: item.estoqueInicial||0, entrada: item.entrada||0, valorUnit: item.valorUnit||0
+  });
   $('editDistModal').classList.remove('hidden');
   setTimeout(()=>$('editDistCodigo').focus(), 100);
 };
@@ -1560,9 +1572,41 @@ window.saveEditDist = async function() {
   const novaEntrada = Number($('editDistEntrada').value) || 0;
   const novoValor = Number($('editDistValor').value) || 0;
   if(!novaDesc){ showToast('A descrição não pode estar vazia!'); return; }
+
+  // Busca o estado ATUAL no Firestore (pode ter mudado desde que o modal
+  // foi aberto, se outra aba/dispositivo salvou algo nesse meio tempo).
+  let freshData = null;
+  try {
+    const freshSnap = await getDoc(doc(db,'distribuidora',fbId));
+    if (freshSnap.exists()) freshData = freshSnap.data();
+  } catch(e) {}
+
+  let baseline = {};
+  try { baseline = JSON.parse($('editDistModal').dataset.baseline||'{}'); } catch(e){}
+
+  if (freshData) {
+    const mudouEstoque = (freshData.estoqueInicial||0) !== (baseline.estoqueInicial||0);
+    const mudouEntrada = (freshData.entrada||0) !== (baseline.entrada||0);
+    const mudouValor = (freshData.valorUnit||0) !== (baseline.valorUnit||0);
+    if (mudouEstoque || mudouEntrada || mudouValor) {
+      const seguir = confirm(
+        'Este item foi alterado por outra aba/dispositivo enquanto você editava.\n\n' +
+        `Estoque inicial atual no sistema: ${freshData.estoqueInicial||0} (nesta tela: ${novoEstoque})\n` +
+        `Entrada atual no sistema: ${freshData.entrada||0} (nesta tela: ${novaEntrada})\n` +
+        `Valor atual no sistema: ${freshData.valorUnit||0} (nesta tela: ${novoValor})\n\n` +
+        'Clique OK para SOBRESCREVER com os valores desta tela, ou Cancelar para fechar e reabrir a edição com os valores mais recentes.'
+      );
+      if (!seguir) {
+        $('editDistModal').classList.add('hidden');
+        showToast('Edição cancelada. Reabra o item para ver os valores mais recentes.','linear-gradient(135deg,var(--red),#c0392b)');
+        return;
+      }
+    }
+  }
+
   const item = distItems.find(d=>d._fbId===fbId);
-  const hist = item?.priceHistory||[];
-  const currentValor = item?.valorUnit||0;
+  const hist = (freshData?.priceHistory) || item?.priceHistory || [];
+  const currentValor = (freshData?.valorUnit) ?? (item?.valorUnit||0);
   if(currentValor>0 && currentValor!==novoValor) hist.push({valor:currentValor, data:new Date().toISOString()});
   await updateDoc(doc(db,'distribuidora',fbId),{
     codigo: novoCodigo,
@@ -1587,14 +1631,32 @@ window.confirmDeleteDist = function(fbId) {
   }
 };
 
-window.editEstoqueInicial = function(fbId, current) {
-  const val = prompt('Novo Estoque Inicial:', current);
+window.editEstoqueInicial = async function(fbId, current) {
+  // Confere o valor mais recente no Firestore antes de abrir o prompt, para
+  // não editar em cima de um número que outra aba/dispositivo já mudou.
+  let atualServidor = current;
+  try {
+    const freshSnap = await getDoc(doc(db,'distribuidora',fbId));
+    if (freshSnap.exists()) atualServidor = freshSnap.data().estoqueInicial||0;
+  } catch(e) {}
+  if (Number(atualServidor) !== Number(current)) {
+    showToast(`Valor mudou em outra aba (agora é ${atualServidor}). Reabrindo com o valor atual.`,'linear-gradient(135deg,var(--red),#c0392b)');
+  }
+  const val = prompt('Novo Estoque Inicial:', atualServidor);
   if(val===null||isNaN(Number(val))) return;
   updateDoc(doc(db,'distribuidora',fbId),{estoqueInicial:Number(val)}).then(()=>showToast('Estoque inicial atualizado!','linear-gradient(135deg,var(--green),var(--blue))'));
 };
 
-window.editEntrada = function(fbId, current) {
-  const val = prompt('Nova Entrada:', current);
+window.editEntrada = async function(fbId, current) {
+  let atualServidor = current;
+  try {
+    const freshSnap = await getDoc(doc(db,'distribuidora',fbId));
+    if (freshSnap.exists()) atualServidor = freshSnap.data().entrada||0;
+  } catch(e) {}
+  if (Number(atualServidor) !== Number(current)) {
+    showToast(`Valor mudou em outra aba (agora é ${atualServidor}). Reabrindo com o valor atual.`,'linear-gradient(135deg,var(--red),#c0392b)');
+  }
+  const val = prompt('Nova Entrada:', atualServidor);
   if(val===null||isNaN(Number(val))) return;
   updateDoc(doc(db,'distribuidora',fbId),{entrada:Number(val)}).then(()=>showToast('Entrada atualizada!','linear-gradient(135deg,var(--green),var(--blue))'));
 };
@@ -1605,12 +1667,21 @@ function getOrderedQty(descricao) {
 }
 
 window.editValorUnit = async function(fbId, current) {
-  const val = prompt('Valor Unitário (R$):', current);
+  let freshData = null;
+  try {
+    const freshSnap = await getDoc(doc(db,'distribuidora',fbId));
+    if (freshSnap.exists()) freshData = freshSnap.data();
+  } catch(e) {}
+  let atualServidor = freshData ? (freshData.valorUnit||0) : current;
+  if (Number(atualServidor) !== Number(current)) {
+    showToast(`Valor mudou em outra aba (agora é R$ ${atualServidor}). Reabrindo com o valor atual.`,'linear-gradient(135deg,var(--red),#c0392b)');
+  }
+  const val = prompt('Valor Unitário (R$):', atualServidor);
   if(val===null||isNaN(Number(val))) return;
   const novoValor = Number(val);
   const item = distItems.find(d=>d._fbId===fbId);
-  const hist = item?.priceHistory||[];
-  if(current>0) hist.push({valor:current, data:new Date().toISOString()});
+  const hist = (freshData?.priceHistory) || item?.priceHistory || [];
+  if(Number(atualServidor)>0) hist.push({valor:Number(atualServidor), data:new Date().toISOString()});
   await updateDoc(doc(db,'distribuidora',fbId),{valorUnit:novoValor, priceHistory:hist});
   showToast('Valor atualizado!','linear-gradient(135deg,var(--green),var(--blue))');
 };
