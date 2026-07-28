@@ -1228,7 +1228,7 @@ async function initFirebase() {
   onSnapshot(collection(db,'pedidos'), snap=>{
     orders = snap.docs.map(d=>({...d.data(),_fbId:d.id})).sort((a,b)=>new Date(b.data)-new Date(a.data));
     window._ebiOrders = orders;
-    renderOrders(); updateStats(); checkStockAlerts(); checkNaoCadastradosAlert();
+    renderOrders(); renderDist(); updateStats(); checkStockAlerts(); checkNaoCadastradosAlert();
     if(!$('dashContent').classList.contains('hidden')) renderDashboard();
   });
 }
