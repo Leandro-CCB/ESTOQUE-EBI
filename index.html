@@ -2079,7 +2079,7 @@ window.updateGroupStatus = async function(casa, status) {
 };
 
 // ── EDIT ORDER ──
-let editOrderItems = [];
+window.editOrderItems = [];
 window.openEditOrderModal = function(fbId) {
   const order = orders.find(o=>o._fbId===fbId); if(!order) return;
   $('editOrderFbId').value = fbId;
@@ -2088,13 +2088,13 @@ window.openEditOrderModal = function(fbId) {
   cs.innerHTML = churches.map(c=>`<option value="${c.nome}"${c.nome===order.casa?' selected':''}>${c.nome}</option>`).join('');
   $('editOrderResp').value = order.responsavel||'';
   $('editOrderObs').value = order.obs||'';
-  editOrderItems = (order.itens||[]).map(it=>({...it, _id:genId()}));
+  window.editOrderItems = (order.itens||[]).map(it=>({...it, _id:genId()}));
   renderEditOrderItems();
   $('editOrderModal').classList.remove('hidden');
 };
 window.closeEditOrderModal = function() { $('editOrderModal').classList.add('hidden'); };
 function renderEditOrderItems() {
-  $('editOrderItemsContainer').innerHTML = editOrderItems.map((it,i)=>`
+  $('editOrderItemsContainer').innerHTML = window.editOrderItems.map((it,i)=>`
     <div class="edit-order-item-row" id="eoi_${it._id}">
       <div style="flex:1;min-width:140px">
         <input type="text" value="${it.descricao.replace(/"/g,'&quot;')}"
@@ -2110,11 +2110,11 @@ function renderEditOrderItems() {
     </div>`).join('');
 }
 window.addEditOrderItem = function() {
-  editOrderItems.push({descricao:'',quantidade:1,codigo:'',_id:genId()});
+  window.editOrderItems.push({descricao:'',quantidade:1,codigo:'',_id:genId()});
   renderEditOrderItems();
 };
 window.removeEditOrderItem = function(i) {
-  editOrderItems.splice(i,1);
+  window.editOrderItems.splice(i,1);
   renderEditOrderItems();
 };
 window.saveEditOrder = async function() {
@@ -2122,7 +2122,7 @@ window.saveEditOrder = async function() {
   const casa = $('editOrderCasa').value;
   const resp = $('editOrderResp').value.trim();
   const obs  = $('editOrderObs').value.trim();
-  const itens = editOrderItems.filter(it=>it.descricao.trim()).map(it=>({
+  const itens = window.editOrderItems.filter(it=>it.descricao.trim()).map(it=>({
     descricao:it.descricao.trim(), quantidade:Number(it.quantidade)||1, codigo:it.codigo||''
   }));
   if(!casa||!resp){ showToast('Preencha Igreja e Responsável!'); return; }
