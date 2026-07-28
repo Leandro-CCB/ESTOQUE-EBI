@@ -497,7 +497,7 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
             <button class="btn btn-primary" onclick="exportBackup()" style="background:linear-gradient(135deg,#7209b7,#4361ee);box-shadow:0 4px 18px rgba(114,9,183,.35)">
               📥 Exportar Backup Completo
             </button>
-            <button class="btn btn-sec" onclick="$('backupFileInput').click()" style="border-color:rgba(76,201,240,.4);color:var(--cyan)">
+            <button id="importBackupBtn" class="btn btn-sec" onclick="document.getElementById('backupFileInput').click()" style="border-color:rgba(76,201,240,.4);color:var(--cyan)">
               📤 Importar Backup
             </button>
             <input type="file" id="backupFileInput" accept=".json" class="hidden" onchange="importBackup(this)"/>
@@ -628,7 +628,7 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
       </div>
       <div class="modal-btns">
         <button class="btn btn-primary" onclick="gerarRelatorioPDF()">📥 Gerar PDF</button>
-        <button class="btn btn-sec" onclick="$('dashPdfModal').classList.add('hidden')">Cancelar</button>
+        <button class="btn btn-sec" onclick="document.getElementById('dashPdfModal').classList.add('hidden')">Cancelar</button>
       </div>
     </div>
   </div>
@@ -2687,7 +2687,7 @@ window.importBackup = async function(input) {
   if (!confirmed) return;
 
   const status = $('backupStatus');
-  const importBtn = document.querySelector('[onclick="$(\'backupFileInput\').click()"]');
+  const importBtn = document.getElementById('importBackupBtn');
   try {
     importBtn.disabled = true;
     importBtn.textContent = '⏳ Importando...';
