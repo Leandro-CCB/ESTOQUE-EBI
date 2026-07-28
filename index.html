@@ -977,22 +977,97 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
   }
 </script>
 
-<!-- FIREBASE -->
+<!-- SUPABASE -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, updateDoc, getDocs, getDoc }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const SUPABASE_URL = "https://fyggsslndwsguavhduly.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5Z2dzc2xuZHdzZ3VhdmhkdWx5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxNzYyNDksImV4cCI6MjA5MTc1MjI0OX0.xxoROa9LNFBgSitG_sEP4IknAzIU7vxZuinRC_P0Lh4";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const firebaseConfig = {
-  apiKey:"AIzaSyDkqq88UJjXgU6HTFU5KEj-gMHgbyEeQxs",
-  authDomain:"estoque-ebi.firebaseapp.com",
-  projectId:"estoque-ebi",
-  storageBucket:"estoque-ebi.firebasestorage.app",
-  messagingSenderId:"1060228147372",
-  appId:"1:1060228147372:web:eca4bfc47ca3f040145709"
+// Nomes das tabelas no Supabase — todas com prefixo EBI_ para diferenciar
+// de outros projetos, como pedido.
+const TABLE_MAP = {
+  churches: 'EBI_Igrejas',
+  products: 'EBI_Produtos',
+  distribuidora: 'EBI_Estoque',
+  pedidos: 'EBI_Pedidos',
+  itens_nao_cadastrados: 'EBI_ItensNaoCadastrados',
+  _meta: 'EBI_Controle'
 };
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+
+// ── ADAPTADOR "estilo Firestore" sobre o Supabase ──────────────
+// Isso existe para o restante do arquivo (que usa collection/doc/addDoc/
+// setDoc/updateDoc/deleteDoc/getDoc/getDocs/onSnapshot) continuar
+// funcionando sem precisar reescrever centenas de linhas. Cada linha aqui
+// corresponde 1:1 ao comportamento do Firestore que era usado antes.
+function collection(_db, name) { return { table: TABLE_MAP[name] || name, colName: name }; }
+function doc(_db, name, id) { return { table: TABLE_MAP[name] || name, colName: name, id }; }
+
+async function getDocs(collRef) {
+  const { data, error } = await sb.from(collRef.table).select('id,data');
+  if (error) { console.error('getDocs', collRef.table, error); throw error; }
+  const rows = data || [];
+  return { empty: rows.length === 0, docs: rows.map(r => ({ id: r.id, data: () => r.data })) };
+}
+
+async function getDoc(docRef) {
+  const { data, error } = await sb.from(docRef.table).select('id,data').eq('id', docRef.id).maybeSingle();
+  if (error) { console.error('getDoc', docRef.table, error); throw error; }
+  return { exists: () => !!data, data: () => (data ? data.data : undefined), id: docRef.id };
+}
+
+async function setDoc(docRef, value) {
+  const { error } = await sb.from(docRef.table).upsert({ id: docRef.id, data: value });
+  if (error) { console.error('setDoc', docRef.table, error); throw error; }
+}
+
+async function addDoc(collRef, value) {
+  const id = value.id || genIdAdapter();
+  const { error } = await sb.from(collRef.table).insert({ id, data: { ...value, id } });
+  if (error) { console.error('addDoc', collRef.table, error); throw error; }
+  return { id };
+}
+
+async function updateDoc(docRef, patch) {
+  // Merge parcial (equivalente ao updateDoc do Firestore, que não
+  // sobrescreve campos que não foram passados no patch).
+  const { data: cur, error: e1 } = await sb.from(docRef.table).select('data').eq('id', docRef.id).maybeSingle();
+  if (e1) { console.error('updateDoc(read)', docRef.table, e1); throw e1; }
+  const merged = { ...(cur ? cur.data : {}), ...patch };
+  const { error: e2 } = await sb.from(docRef.table).update({ data: merged }).eq('id', docRef.id);
+  if (e2) { console.error('updateDoc(write)', docRef.table, e2); throw e2; }
+}
+
+async function deleteDoc(docRef) {
+  const { error } = await sb.from(docRef.table).delete().eq('id', docRef.id);
+  if (error) { console.error('deleteDoc', docRef.table, error); throw error; }
+}
+
+// Equivalente ao onSnapshot: busca tudo já de cara e, a cada mudança em
+// tempo real (insert/update/delete) na tabela, busca tudo de novo e chama
+// o callback — igual ao comportamento visto pelo resto do app.
+const _realtimeChannels = {};
+function onSnapshot(collRef, cb) {
+  async function refetch() {
+    try { cb(await getDocs(collRef)); }
+    catch (e) { console.error('onSnapshot refetch error', collRef.table, e); }
+  }
+  refetch();
+  if (!_realtimeChannels[collRef.table]) {
+    _realtimeChannels[collRef.table] = sb
+      .channel('realtime:' + collRef.table)
+      .on('postgres_changes', { event: '*', schema: 'public', table: collRef.table }, refetch)
+      .subscribe();
+  }
+  return () => {}; // unsubscribe não usado no restante do app
+}
+
+function genIdAdapter() { return 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7); }
+
+const db = {}; // placeholder — o adaptador acima não usa db de fato, mas o
+               // restante do arquivo passa "db" pra collection()/doc(), então
+               // mantemos a variável só para não quebrar essas chamadas.
+
 
 // ── STATE ──────────────────────────────────────────
 const ADMIN_PASSWORD = "amem";
@@ -1608,6 +1683,43 @@ window.saveEditDist = async function() {
   const hist = (freshData?.priceHistory) || item?.priceHistory || [];
   const currentValor = (freshData?.valorUnit) ?? (item?.valorUnit||0);
   if(currentValor>0 && currentValor!==novoValor) hist.push({valor:currentValor, data:new Date().toISOString()});
+
+  // Se o código e/ou a descrição mudaram, atualiza também os pedidos já
+  // feitos que referenciavam o nome/código antigo — assim o cálculo de
+  // estoque (que casa pedidos com itens por código/descrição) continua
+  // encontrando essas quantidades depois da renomeação, em vez de "perdê-las".
+  const codigoAntigo = (freshData?.codigo ?? item?.codigo ?? '').trim();
+  const descAntiga = (freshData?.descricao ?? item?.descricao ?? '').trim();
+  if (codigoAntigo || descAntiga) {
+    const codigoMudou = codigoAntigo && codigoAntigo !== novoCodigo;
+    const descMudou = descAntiga && descAntiga !== novaDesc;
+    if (codigoMudou || descMudou) {
+      try {
+        const pedidosSnap = await getDocs(collection(db,'pedidos'));
+        for (const p of pedidosSnap.docs) {
+          const pedido = p.data();
+          const itensAtuais = pedido.itens||[];
+          let mudouAlgo = false;
+          const itensNovos = itensAtuais.map(it=>{
+            const bateCodigo = codigoAntigo && (it.codigo||'').trim() === codigoAntigo;
+            const bateDesc = !bateCodigo && descAntiga && it.descricao === descAntiga;
+            if (bateCodigo || bateDesc) {
+              mudouAlgo = true;
+              return {...it, codigo: novoCodigo, descricao: novaDesc};
+            }
+            return it;
+          });
+          if (mudouAlgo) {
+            await updateDoc(doc(db,'pedidos',p.id),{itens: itensNovos});
+          }
+        }
+      } catch(e) {
+        console.error('Falha ao propagar renomeação para pedidos existentes', e);
+        showToast('Item salvo, mas houve erro ao atualizar pedidos antigos com o novo nome/código. Verifique o console.','linear-gradient(135deg,var(--red),#c0392b)');
+      }
+    }
+  }
+
   await updateDoc(doc(db,'distribuidora',fbId),{
     codigo: novoCodigo,
     descricao: novaDesc,
@@ -1661,9 +1773,21 @@ window.editEntrada = async function(fbId, current) {
   updateDoc(doc(db,'distribuidora',fbId),{entrada:Number(val)}).then(()=>showToast('Entrada atualizada!','linear-gradient(135deg,var(--green),var(--blue))'));
 };
 
-function getOrderedQty(descricao) {
+// Antes, essa função só comparava pela descrição exata do item. Se alguém
+// editasse a descrição de um item em "Distribuidora → Editar", todos os
+// pedidos antigos (que guardaram a descrição de quando foram feitos) paravam
+// de bater e a quantidade pedida "sumia" do cálculo do estoque atual — o
+// estoque ficava errado (maior do que deveria). Agora casa também pelo
+// código do item, que é bem mais estável do que o texto da descrição.
+function getOrderedQty(item) {
+  const descricao = typeof item === 'string' ? item : item.descricao;
+  const codigo = (typeof item === 'string' ? '' : (item.codigo||'')).trim();
   return orders.filter(o=>o.status!=='cancelado')
-    .reduce((s,o)=>s+(o.itens||[]).filter(it=>it.descricao===descricao).reduce((ss,it)=>ss+Number(it.quantidade||0),0),0);
+    .reduce((s,o)=>s+(o.itens||[]).filter(it=>{
+      const itCodigo = (it.codigo||'').trim();
+      if (codigo && itCodigo) return itCodigo === codigo; // casa por código quando os dois têm código
+      return it.descricao === descricao; // senão, cai pra comparação por descrição (comportamento antigo)
+    }).reduce((ss,it)=>ss+Number(it.quantidade||0),0),0);
 }
 
 window.editValorUnit = async function(fbId, current) {
@@ -1709,11 +1833,18 @@ window.renderDist = function() {
   const s=$('distSearch').value.toLowerCase();
   const f=distItems.filter(d=>d.descricao.toLowerCase().includes(s)||(d.codigo||'').toLowerCase().includes(s));
   $('distTbody').innerHTML=f.map(d=>{
-    const pedTot=(d.pedidos||0)+getOrderedQty(d.descricao);
+    const pedFixo = d.pedidos||0;
+    const pedReal = getOrderedQty(d);
+    const pedTot = pedFixo + pedReal;
     const atual=(d.estoqueInicial||0)+(d.entrada||0)-pedTot;
     const bc=atual>5?'bg-green':atual>0?'bg-yellow':'bg-red';
     const valorUnit = d.valorUnit||0;
     const valorTotal = valorUnit * Math.max(0,atual);
+    // Diagnóstico: mostra o detalhamento no title (tooltip ao passar o mouse)
+    // pra dar pra conferir se o "pedidos fixo" (dado antigo) está sendo
+    // somado em cima de pedidos que também já estão na aba Pedidos (o que
+    // contaria a mesma coisa duas vezes).
+    const tooltipPed = `Fixo (dado histórico): ${pedFixo} + Calculado da aba Pedidos: ${pedReal} = Total: ${pedTot}`;
   return `<tr>
       <td style="white-space:nowrap;display:flex;gap:6px">
         <button class="btn btn-blue" style="padding:4px 10px;font-size:11px;white-space:nowrap"
@@ -1729,7 +1860,7 @@ window.renderDist = function() {
       <td>
         <span style="color:var(--green);font-weight:700">${fmtR(valorUnit)}</span>
       </td>
-      <td>${pedTot}</td>
+      <td title="${tooltipPed}" style="cursor:help;border-bottom:1px dotted var(--muted)">${pedTot}</td>
       <td><span class="badge ${bc}">${atual}</span></td>
       <td style="font-weight:700;color:${valorUnit>0?'var(--cyan)':'var(--muted)'}">${valorUnit>0?fmtR(valorTotal):'—'}</td>
     </tr>`;
@@ -1738,7 +1869,7 @@ window.renderDist = function() {
   // NOVO: Totais da distribuidora
   let totalValorEstoque = 0, totalZero = 0;
   distItems.forEach(d=>{
-    const pedTot=(d.pedidos||0)+getOrderedQty(d.descricao);
+    const pedTot=(d.pedidos||0)+getOrderedQty(d);
     const atual=(d.estoqueInicial||0)+(d.entrada||0)-pedTot;
     const valorUnit = d.valorUnit||0;
     if(atual > 0 && valorUnit > 0) totalValorEstoque += valorUnit * atual;
@@ -2210,7 +2341,7 @@ function checkStockAlerts() {
   const bar=$('stockAlertBar'), items=$('stockAlertItems');
   if(!bar||!items) return;
   const low=distItems.filter(d=>{
-    const pedTot=(d.pedidos||0)+getOrderedQty(d.descricao);
+    const pedTot=(d.pedidos||0)+getOrderedQty(d);
     const atual=(d.estoqueInicial||0)+(d.entrada||0)-pedTot;
     return atual<=0;
   });
