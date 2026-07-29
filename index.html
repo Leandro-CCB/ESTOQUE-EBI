@@ -392,8 +392,9 @@ footer{background:rgba(13,27,42,.9);border-top:1px solid var(--border);
           </div>
           <button class="btn btn-primary" style="margin-top:12px" onclick="addDistItem()">+ Adicionar Item</button>
         </details>
-        <div class="search-row">
-          <input type="text" id="distSearch" placeholder="🔍 Buscar item..." oninput="window.renderDist()"/>
+        <div class="search-row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="distSearch" placeholder="🔍 Buscar item..." oninput="window.renderDist()" style="flex:1;min-width:180px"/>
+          <button class="btn" style="background:linear-gradient(135deg,var(--red),#c0392b);color:#fff" onclick="window.zerarTodoEstoque()">🗑️ Zerar Estoque</button>
         </div>
         <div class="tbl-wrap">
           <table>
@@ -1720,7 +1721,7 @@ window.saveEditDist = async function() {
     }
   }
 
-  await updateDoc(doc(db,'distribuidora',fbId),{
+  const patch = {
     codigo: novoCodigo,
     descricao: novaDesc,
     unidade: novaUn,
@@ -1728,9 +1729,38 @@ window.saveEditDist = async function() {
     entrada: novaEntrada,
     valorUnit: novoValor,
     priceHistory: hist
-  });
+  };
+  await updateDoc(doc(db,'distribuidora',fbId), patch);
+  // Atualiza o estado local e redesenha a tabela IMEDIATAMENTE, sem
+  // depender do realtime/onSnapshot (que pode demorar ou falhar em chegar
+  // de volta pra mesma aba que fez a alteração).
+  const idx = distItems.findIndex(d=>d._fbId===fbId);
+  if (idx>-1) distItems[idx] = {...distItems[idx], ...patch};
+  window._ebiDistItems = distItems;
+  renderDist(); refreshAllAutocompletes(); checkStockAlerts();
   $('editDistModal').classList.add('hidden');
   showToast('Item atualizado com sucesso! ✅','linear-gradient(135deg,var(--green),var(--blue))');
+};
+
+window.zerarTodoEstoque = async function() {
+  if(!confirm('Isso vai ZERAR o "Estoque Inicial" e a "Entrada" de TODOS os itens cadastrados na Distribuidora.\n\nOs pedidos já feitos NÃO serão alterados.\n\nEsta ação não pode ser desfeita. Deseja continuar?')) return;
+  const segundaConfirmacao = confirm('Tem certeza mesmo? Todos os estoques iniciais e entradas irão para 0.');
+  if(!segundaConfirmacao) return;
+  showToast('Zerando estoque de todos os itens... aguarde.','linear-gradient(135deg,var(--blue),var(--cyan))');
+  try {
+    for (const item of distItems) {
+      if (!item._fbId) continue;
+      await updateDoc(doc(db,'distribuidora',item._fbId), {estoqueInicial:0, entrada:0});
+      item.estoqueInicial = 0;
+      item.entrada = 0;
+    }
+    window._ebiDistItems = distItems;
+    renderDist(); refreshAllAutocompletes(); checkStockAlerts();
+    showToast('✅ Estoque de todos os itens zerado!','linear-gradient(135deg,var(--green),var(--blue))');
+  } catch(e) {
+    console.error('Erro ao zerar estoque', e);
+    showToast('❌ Erro ao zerar estoque. Verifique o console.','linear-gradient(135deg,var(--red),#c0392b)');
+  }
 };
 
 window.confirmDeleteDist = function(fbId) {
@@ -1756,7 +1786,12 @@ window.editEstoqueInicial = async function(fbId, current) {
   }
   const val = prompt('Novo Estoque Inicial:', atualServidor);
   if(val===null||isNaN(Number(val))) return;
-  updateDoc(doc(db,'distribuidora',fbId),{estoqueInicial:Number(val)}).then(()=>showToast('Estoque inicial atualizado!','linear-gradient(135deg,var(--green),var(--blue))'));
+  await updateDoc(doc(db,'distribuidora',fbId),{estoqueInicial:Number(val)});
+  const idx = distItems.findIndex(d=>d._fbId===fbId);
+  if (idx>-1) distItems[idx].estoqueInicial = Number(val);
+  window._ebiDistItems = distItems;
+  renderDist(); refreshAllAutocompletes(); checkStockAlerts();
+  showToast('Estoque inicial atualizado!','linear-gradient(135deg,var(--green),var(--blue))');
 };
 
 window.editEntrada = async function(fbId, current) {
@@ -1770,7 +1805,12 @@ window.editEntrada = async function(fbId, current) {
   }
   const val = prompt('Nova Entrada:', atualServidor);
   if(val===null||isNaN(Number(val))) return;
-  updateDoc(doc(db,'distribuidora',fbId),{entrada:Number(val)}).then(()=>showToast('Entrada atualizada!','linear-gradient(135deg,var(--green),var(--blue))'));
+  await updateDoc(doc(db,'distribuidora',fbId),{entrada:Number(val)});
+  const idx = distItems.findIndex(d=>d._fbId===fbId);
+  if (idx>-1) distItems[idx].entrada = Number(val);
+  window._ebiDistItems = distItems;
+  renderDist(); refreshAllAutocompletes(); checkStockAlerts();
+  showToast('Entrada atualizada!','linear-gradient(135deg,var(--green),var(--blue))');
 };
 
 // Antes, essa função só comparava pela descrição exata do item. Se alguém
